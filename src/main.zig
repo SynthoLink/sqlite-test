@@ -27,12 +27,16 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // Get the absolute path of the database
     var buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     var db_path_tmp = try std.fs.realpath(".", &buffer);
     var db_path: [:0]u8 = try std.fs.path.joinZ(allocator, &[_][]const u8{ db_path_tmp, "data.db" });
     defer allocator.free(db_path);
+
+    // If the database is new, we need to create a table later
     var is_new = !db_exists(db_path);
 
+    // Create|Open the database
     var init_options = .{
         .mode = sqlite.Db.Mode{ .File = db_path },
         .open_flags = .{
@@ -45,6 +49,7 @@ pub fn main() !void {
     var db = try sqlite.Db.init(init_options);
     defer db.deinit();
 
+    // Create a table if the database is new
     if (is_new) {
         const query =
             \\CREATE TABLE files (
@@ -67,7 +72,7 @@ pub fn main() !void {
         try stmt_create.exec(.{}, .{});
     }
 
-    // TODO: Remove this when the server part is donette
+    // Couldn't bother to make it autoincrement
     const next_id_query =
         \\SELECT MAX(file_id)+1 FROM files;
     ;
@@ -85,20 +90,25 @@ pub fn main() !void {
         .{},
     ) orelse 0;
 
+    // For each argument...
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     for (args[1..]) |arg| {
+        // Get the absolute path
         var p = try realpath(allocator, arg);
         defer allocator.free(p);
 
+        // And try to insert it
         var stmt = try db.prepareWithDiags("INSERT INTO files(file_id, local_path) VALUES (?{u32}, ?{text});", .{ .diags = &diags });
         defer stmt.deinit();
 
+        // The path is UNIQUE, so this could fail
         stmt.exec(.{}, .{ next_id, Text{ .data = p } }) catch |err| {
             std.log.err("Error while inserting file:\n\tError: {}\n\tDiags: {s}\n", .{ err, diags });
         };
 
+        // Just for debugging
         std.debug.print("File inserted\n", .{});
 
         next_id += 1;
